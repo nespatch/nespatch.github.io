@@ -608,6 +608,15 @@
     }
 
     .free-try button:hover { opacity: 0.88; }
+    .free-try button:disabled { opacity: 0.6; cursor: default; }
+
+    .free-try-status {
+      margin: 10px 0 0;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+
+    .free-try-status[hidden] { display: none; }
 
     .demo {
       width: 100%;
@@ -912,12 +921,13 @@
           </div>
         </div>
 
-        <form class="free-try" action="#" method="post">
+        <form class="free-try" action="#" method="post" novalidate>
           <p>Want a free try?</p>
           <div class="free-try-row">
-            <input type="email" name="email" placeholder="Your email" autocomplete="email" required />
+            <input type="email" name="email" placeholder="Your email" autocomplete="email" maxlength="254" required />
             <button type="submit">Send</button>
           </div>
+          <p class="free-try-status" id="free-try-status" hidden></p>
         </form>
 
         </div>
@@ -1073,6 +1083,7 @@
   <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
   <script src="supabase-config.js"></script>
   <script src="paddle-config.js"></script>
+  <script src="translate-config.js"></script>
   <script>
     var sb = window.supabase.createClient(
       window.NESPATCH_SUPABASE.url,
@@ -1106,6 +1117,12 @@
       drop.setAttribute("aria-disabled", locked ? "true" : "false");
       fileInput.disabled = locked;
       dropPick.textContent = locked ? "Buy credits" : "Select from your computer";
+      var title = document.querySelector(".drop-title");
+      var hint = document.querySelector(".drop-hint");
+      if (title && hint) {
+        title.textContent = locked ? "Buy a credits first." : "Add a PDF.";
+        hint.textContent = locked ? "Then you can add a PDF." : "One credit, one file.";
+      }
     }
 
     var currentSession = null;
@@ -1299,6 +1316,71 @@
       });
     });
 
+    var dropTitle = document.querySelector(".drop-title");
+    var dropHint = document.querySelector(".drop-hint");
+
+    function restoreDropText() {
+      var locked = fileInput.disabled;
+      dropTitle.textContent = locked ? "Buy a credits first." : "Add a PDF.";
+      dropHint.textContent = locked ? "Then you can add a PDF." : "One credit, one file.";
+    }
+
+    fileInput.addEventListener("change", function () {
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file || fileInput.disabled) return;
+      translateFile(file);
+    });
+
+    function translateFile(file) {
+      var endpoint = window.NESPATCH_TRANSLATE && window.NESPATCH_TRANSLATE.url;
+      if (!endpoint) {
+        dropHint.textContent = "Translation is not connected yet.";
+        return;
+      }
+      if (!currentSession) {
+        dropHint.textContent = "Sign in first.";
+        return;
+      }
+      if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+        dropHint.textContent = "Choose a PDF.";
+        return;
+      }
+      var body = new FormData();
+      body.append("file", file, file.name);
+      body.append("target", langTo.value);
+      body.append("source", langFrom.value);
+      dropPick.disabled = true;
+      dropTitle.textContent = "Translating…";
+      dropHint.textContent = "This can take a minute.";
+      fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + currentSession.access_token },
+        body: body
+      }).then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (data) {
+            throw new Error(data.error || "Translation failed.");
+          });
+        }
+        return response.blob();
+      }).then(function (blob) {
+        var link = document.createElement("a");
+        var name = file.name.replace(/\.pdf$/i, "") + " translated.pdf";
+        link.href = URL.createObjectURL(blob);
+        link.download = name;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        dropPick.disabled = false;
+        restoreDropText();
+        loadCredits(currentSession);
+      }).catch(function (error) {
+        dropPick.disabled = false;
+        dropTitle.textContent = "Add a PDF.";
+        dropHint.textContent = error.message || "Translation failed.";
+      });
+    }
+
     dropPick.addEventListener("click", function () {
       if (fileInput.disabled) {
         openPaywall();
@@ -1315,6 +1397,32 @@
     });
     document.querySelector(".free-try").addEventListener("submit", function (event) {
       event.preventDefault();
+      var form = event.currentTarget;
+      var input = form.querySelector("input[name=email]");
+      var status = document.getElementById("free-try-status");
+      var button = form.querySelector("button");
+      var email = input.value.trim().toLowerCase();
+      function showStatus(text) {
+        status.hidden = !text;
+        status.textContent = text || "";
+      }
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showStatus("Enter a valid email.");
+        return;
+      }
+      button.disabled = true;
+      sb.from("emails").insert({ email: email }).then(function (result) {
+        button.disabled = false;
+        if (!result.error || result.error.code === "23505") {
+          input.value = "";
+          showStatus("Saved.");
+          return;
+        }
+        showStatus("Could not save this email.");
+      }).catch(function () {
+        button.disabled = false;
+        showStatus("Could not save this email.");
+      });
     });
 
     var lightbox = document.getElementById("lightbox");

@@ -1369,10 +1369,7 @@
 
     function setFileAccess(amount) {
       creditAmount = amount;
-      if (heldFile && amount >= 1 && currentSession && !translating) {
-        translateFile(heldFile);
-        return;
-      }
+      if (translating) return;
       paintDrop();
     }
 
@@ -1587,49 +1584,95 @@
       var file = fileInput.files && fileInput.files[0];
       fileInput.value = "";
       if (!file) return;
-      translateFile(file);
+      holdFile(file);
     });
 
-    function translateFile(file) {
+    function holdFile(file) {
       if (!file) return;
+      if (translating) return;
       if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
         dropHint.textContent = "Choose a PDF.";
         return;
       }
       clearPreview();
-      translating = false;
       previewReady = false;
       heldFile = file;
       drop.classList.add("is-file");
       track("file_chosen");
-      if (creditAmount < 1 || !currentSession) {
+      paintDrop();
+    }
+
+    function playSteps(finish) {
+      clearPreview();
+      translating = true;
+      previewReady = false;
+      markReady(false);
+      dropPick.disabled = true;
+      dropChange.disabled = true;
+      showProgress(true);
+      var steps = [
+        ["Sending this PDF to DeepL.", "16%"],
+        ["Translating the pages.", "48%"],
+        ["Keeping the layout in place.", "78%"],
+        ["Preparing the download.", "92%"]
+      ];
+      function showStep(step) {
+        if (!translating) return;
+        dropHint.textContent = step[0];
+        dropProgressBar.style.width = step[1];
+      }
+      showStep(steps[0]);
+      steps.forEach(function (step, index) {
+        if (index === 0) return;
+        previewTimers.push(setTimeout(function () {
+          showStep(step);
+        }, index * 1100));
+      });
+      if (finish) {
+        previewTimers.push(setTimeout(function () {
+          if (!translating) return;
+          finish();
+        }, steps.length * 1100));
+      }
+    }
+
+    function startPreview() {
+      if (translating || !heldFile) return;
+      track("preview_started");
+      playSteps(function () {
+        translating = false;
+        previewReady = true;
+        previewTimers = [];
+        track("preview_ready");
         paintDrop();
-        return;
-      }
-      if (!langFrom.value || !langTo.value) {
-        dropTitle.textContent = file.name;
-        dropHint.textContent = "Choose the languages.";
-        dropPick.textContent = "Translate";
-        dropPick.disabled = false;
-        return;
-      }
+      });
+    }
+
+    function failTranslate(file, message) {
+      track("translate_failed", { error: String(message || "Translation failed.").slice(0, 200) });
+      clearPreview();
+      translating = false;
+      showProgress(false);
+      dropPick.disabled = false;
+      dropChange.disabled = false;
+      dropTitle.textContent = file.name;
+      dropHint.textContent = message || "Translation failed.";
+      dropPick.textContent = "Translate";
+    }
+
+    function startRealTranslate() {
+      if (translating || !heldFile || !currentSession) return;
       var endpoint = window.NESPATCH_TRANSLATE && window.NESPATCH_TRANSLATE.url;
       if (!endpoint) {
-        dropTitle.textContent = file.name;
         dropHint.textContent = "Translation is not connected yet.";
-        dropPick.textContent = "Translate";
-        dropPick.disabled = false;
         return;
       }
+      var file = heldFile;
       var body = new FormData();
       body.append("file", file, file.name);
       body.append("target", langTo.value);
       body.append("source", langFrom.value);
-      translating = true;
-      dropPick.disabled = true;
-      dropChange.disabled = true;
-      dropTitle.textContent = "Translating…";
-      dropHint.textContent = "This can take a minute.";
+      playSteps();
       track("translate_started");
       fetch(endpoint, {
         method: "POST",
@@ -1643,6 +1686,9 @@
         }
         return response.blob();
       }).then(function (blob) {
+        if (!translating) return;
+        clearPreview();
+        dropProgressBar.style.width = "100%";
         var link = document.createElement("a");
         var name = file.name.replace(/\.pdf$/i, "") + " translated.pdf";
         link.href = URL.createObjectURL(blob);
@@ -1657,53 +1703,17 @@
         paintDrop();
         loadCredits(currentSession);
       }).catch(function (error) {
-        track("translate_failed");
-        translating = false;
-        dropPick.disabled = false;
-        dropChange.disabled = false;
-        dropTitle.textContent = file.name;
-        dropHint.textContent = error.message || "Translation failed.";
-        dropPick.textContent = "Translate";
+        if (!translating && !heldFile) return;
+        failTranslate(file, error.message);
       });
-    }
-
-    function startPreview() {
-      if (translating || !heldFile) return;
-      translating = true;
-      previewReady = false;
-      markReady(false);
-      dropPick.disabled = true;
-      dropChange.disabled = true;
-      showProgress(true);
-      var steps = [
-        ["Sending this PDF to DeepL.", "16%"],
-        ["Translating the pages.", "48%"],
-        ["Keeping the layout in place.", "78%"],
-        ["Preparing the download.", "100%"]
-      ];
-      dropHint.textContent = steps[0][0];
-      dropProgressBar.style.width = steps[0][1];
-      track("preview_started");
-      steps.forEach(function (step, index) {
-        if (index === 0) return;
-        previewTimers.push(setTimeout(function () {
-          if (!translating) return;
-          dropHint.textContent = step[0];
-          dropProgressBar.style.width = step[1];
-        }, index * 1100));
-      });
-      previewTimers.push(setTimeout(function () {
-        if (!translating) return;
-        translating = false;
-        previewReady = true;
-        previewTimers = [];
-        track("preview_ready");
-        paintDrop();
-      }, steps.length * 1100));
     }
 
     dropPick.addEventListener("click", function () {
-      if (heldFile && (creditAmount < 1 || !currentSession)) {
+      if (!heldFile) {
+        fileInput.click();
+        return;
+      }
+      if (creditAmount < 1 || !currentSession) {
         if (!previewReady) {
           if (!langFrom.value || !langTo.value) {
             dropHint.textContent = "Choose the languages.";
@@ -1715,11 +1725,11 @@
         openPaywall();
         return;
       }
-      if (heldFile) {
-        translateFile(heldFile);
+      if (!langFrom.value || !langTo.value) {
+        dropHint.textContent = "Choose the languages.";
         return;
       }
-      fileInput.click();
+      startRealTranslate();
     });
     dropChange.addEventListener("click", function () {
       fileInput.click();

@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-K2BP6CKZ"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+  </script>
   <title>nespatch</title>
   <meta name="description" content="DeepL PDF translation with preserved layout without subscription" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232536eb'/%3E%3Cpath d='M9 8.5h9.2L23 13.2V23.5H9V8.5Z' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M18 8.7V13.3H22.8' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E" />
@@ -409,6 +415,26 @@
 
     .drop-hint:empty { display: none; }
 
+    .drop-progress {
+      width: 100%;
+      height: 2px;
+      margin-top: 6px;
+      background: var(--border);
+    }
+
+    .drop-progress[hidden] { display: none; }
+
+    .drop-progress span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--text);
+      transition: width 0.5s linear;
+    }
+
+    .drop-pick:disabled,
+    .drop-change:disabled { opacity: 0.45; cursor: default; }
+
     .drop-actions {
       display: flex;
       align-items: center;
@@ -447,7 +473,25 @@
 
     .drop-change:hover { border-color: var(--text); }
 
+    .drop-status {
+      display: inline-flex;
+      align-items: center;
+      height: 28px;
+      margin: 0 0 6px;
+      padding: 0 10px;
+      border-radius: 6px;
+      background: var(--text);
+      color: var(--bg);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .drop-status[hidden] { display: none; }
+
     .drop.is-file { border-color: #8d969b; }
+
+    .drop.is-ready { border-color: var(--text); }
 
     .drop.is-file .drop-body {
       align-items: flex-start;
@@ -1025,11 +1069,13 @@
                 <path d="M20.2 2.8V13.6H31" stroke="currentColor" stroke-width="1.6"/>
               </svg>
             </span>
+            <p class="drop-status" hidden>Ready</p>
             <div class="drop-fileline">
               <span class="drop-badge">PDF</span>
               <p class="drop-title">Add a PDF.</p>
             </div>
-            <p class="drop-hint"></p>
+            <p class="drop-hint" aria-live="polite"></p>
+            <div class="drop-progress" hidden><span></span></div>
             <div class="drop-actions">
               <button type="button" class="drop-pick">Select from your device</button>
               <button type="button" class="drop-change">Choose another</button>
@@ -1232,6 +1278,18 @@
         eventCallback: function (event) {
           if (event.name === "checkout.completed") {
             track("checkout_completed");
+            var purchase = window.nespatchPurchase;
+            if (window.gtag && purchase) {
+              var conversion = {
+                send_to: "AW-18571601136/F6FfCPvPmrcdEPDJ0JdF",
+                value: purchase.value,
+                currency: "USD"
+              };
+              var transactionId = event.data && event.data.transaction_id;
+              if (transactionId) conversion.transaction_id = transactionId;
+              gtag("event", "conversion", conversion);
+              window.nespatchPurchase = null;
+            }
             closePaywall();
             sb.auth.getSession().then(function (result) {
               loadCredits(result.data.session);
@@ -1249,21 +1307,50 @@
     var dropChange = document.querySelector(".drop-change");
     var dropTitle = document.querySelector(".drop-title");
     var dropHint = document.querySelector(".drop-hint");
+    var dropStatus = document.querySelector(".drop-status");
     var fileInput = document.getElementById("file");
     var heldFile = null;
     var creditAmount = 0;
     var translating = false;
+    var previewReady = false;
+    var previewTimers = [];
+    var dropProgress = document.querySelector(".drop-progress");
+    var dropProgressBar = dropProgress.querySelector("span");
+
+    function clearPreview() {
+      previewTimers.forEach(clearTimeout);
+      previewTimers = [];
+    }
+
+    function showProgress(on) {
+      dropProgress.hidden = !on;
+      if (!on) dropProgressBar.style.width = "0%";
+    }
+
+    function readyName(file) {
+      return file.name.replace(/\.pdf$/i, "") + " translated.pdf";
+    }
+
+    function markReady(on) {
+      drop.classList.toggle("is-ready", on);
+      dropStatus.hidden = !on;
+    }
 
     function paintDrop() {
       if (translating) return;
-      if (heldFile && creditAmount < 1) {
+      showProgress(false);
+      if (heldFile && (creditAmount < 1 || !currentSession)) {
         drop.classList.add("is-file");
-        dropTitle.textContent = heldFile.name;
-        dropHint.textContent = "Buy credits to translate this PDF via DeepL.";
-        dropPick.textContent = "Buy credits";
+        markReady(previewReady);
+        dropTitle.textContent = previewReady ? readyName(heldFile) : heldFile.name;
+        dropHint.textContent = previewReady ? "The translation is ready. Buy credits to download it." : "";
+        dropPick.textContent = previewReady ? "Buy credits" : "Translate";
         dropPick.disabled = false;
+        dropChange.disabled = false;
         return;
       }
+      previewReady = false;
+      markReady(false);
       if (heldFile) {
         drop.classList.add("is-file");
         dropTitle.textContent = heldFile.name;
@@ -1273,6 +1360,7 @@
         return;
       }
       drop.classList.remove("is-file");
+      markReady(false);
       dropTitle.textContent = "Add a PDF.";
       dropHint.textContent = "";
       dropPick.textContent = "Select from your device";
@@ -1467,6 +1555,8 @@
       }
       setPaywallStatus("");
       track("checkout_started", { credits: Number(files) });
+      var packValue = { "2": 5, "5": 10, "11": 20 }[String(files)];
+      window.nespatchPurchase = packValue ? { value: packValue } : null;
       Paddle.Checkout.open({
         items: [{ priceId: priceId, quantity: 1 }],
         customData: {
@@ -1506,6 +1596,9 @@
         dropHint.textContent = "Choose a PDF.";
         return;
       }
+      clearPreview();
+      translating = false;
+      previewReady = false;
       heldFile = file;
       drop.classList.add("is-file");
       track("file_chosen");
@@ -1574,8 +1667,51 @@
       });
     }
 
+    function startPreview() {
+      if (translating || !heldFile) return;
+      translating = true;
+      previewReady = false;
+      markReady(false);
+      dropPick.disabled = true;
+      dropChange.disabled = true;
+      showProgress(true);
+      var steps = [
+        ["Sending this PDF to DeepL.", "16%"],
+        ["Translating the pages.", "48%"],
+        ["Keeping the layout in place.", "78%"],
+        ["Preparing the download.", "100%"]
+      ];
+      dropHint.textContent = steps[0][0];
+      dropProgressBar.style.width = steps[0][1];
+      track("preview_started");
+      steps.forEach(function (step, index) {
+        if (index === 0) return;
+        previewTimers.push(setTimeout(function () {
+          if (!translating) return;
+          dropHint.textContent = step[0];
+          dropProgressBar.style.width = step[1];
+        }, index * 1100));
+      });
+      previewTimers.push(setTimeout(function () {
+        if (!translating) return;
+        translating = false;
+        previewReady = true;
+        previewTimers = [];
+        track("preview_ready");
+        paintDrop();
+      }, steps.length * 1100));
+    }
+
     dropPick.addEventListener("click", function () {
       if (heldFile && (creditAmount < 1 || !currentSession)) {
+        if (!previewReady) {
+          if (!langFrom.value || !langTo.value) {
+            dropHint.textContent = "Choose the languages.";
+            return;
+          }
+          startPreview();
+          return;
+        }
         openPaywall();
         return;
       }

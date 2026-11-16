@@ -1598,162 +1598,8 @@
       previewReady = false;
       heldFile = file;
       drop.classList.add("is-file");
+      track("file_chosen");
       paintDrop();
-      readPdfKind(file);
-    }
-
-    var pdfKindToken = 0;
-    var pdfKindWait = null;
-    var heldText = null;
-    var pdfjsReady = null;
-
-    function loadPdfjs() {
-      if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
-      if (pdfjsReady) return pdfjsReady;
-      pdfjsReady = new Promise(function (resolve, reject) {
-        var script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-        script.onload = function () { resolve(window.pdfjsLib); };
-        script.onerror = function () { reject(new Error("pdfjs")); };
-        document.head.appendChild(script);
-      });
-      return pdfjsReady;
-    }
-
-    function pageKind(page) {
-      return Promise.all([page.getTextContent(), page.getOperatorList()]).then(function (parts) {
-        var chars = 0;
-        parts[0].items.forEach(function (item) {
-          if (item.str) chars += item.str.replace(/\s/g, "").length;
-        });
-        var box = page.view;
-        var pageArea = Math.abs((box[2] - box[0]) * (box[3] - box[1])) || 1;
-        var coverage = 0;
-        var a = 1, b = 0, c = 0, d = 1;
-        var stack = [];
-        var OPS = pdfjsLib.OPS;
-        var fns = parts[1].fnArray;
-        var args = parts[1].argsArray;
-        for (var i = 0; i < fns.length; i++) {
-          var fn = fns[i];
-          if (fn === OPS.save) {
-            stack.push([a, b, c, d]);
-          } else if (fn === OPS.restore) {
-            var prev = stack.pop();
-            if (prev) { a = prev[0]; b = prev[1]; c = prev[2]; d = prev[3]; }
-          } else if (fn === OPS.transform) {
-            var t = args[i];
-            var na = t[0] * a + t[1] * c;
-            var nb = t[0] * b + t[1] * d;
-            var nc = t[2] * a + t[3] * c;
-            var nd = t[2] * b + t[3] * d;
-            a = na; b = nb; c = nc; d = nd;
-          } else if (
-            fn === OPS.paintImageXObject ||
-            fn === OPS.paintImageXObjectRepeat ||
-            fn === OPS.paintInlineImageXObject
-          ) {
-            var share = Math.hypot(a, b) * Math.hypot(c, d) / pageArea;
-            if (share > coverage) coverage = share;
-          }
-        }
-        if (chars < 8 && coverage < 0.1) return "blank";
-        var hasText = chars >= 200 || (chars >= 40 && coverage < 0.15);
-        if (hasText && coverage >= 0.7) return "searchable";
-        if (hasText) return "text";
-        return "scan";
-      });
-    }
-
-    function pageParagraphs(page) {
-      return page.getTextContent().then(function (text) {
-        var items = [];
-        text.items.forEach(function (item) {
-          if (!item.str || !item.str.trim()) return;
-          items.push({
-            s: item.str,
-            x: item.transform[4],
-            y: item.transform[5],
-            h: item.height || 10
-          });
-        });
-        items.sort(function (a, b) {
-          if (Math.abs(a.y - b.y) > 2) return b.y - a.y;
-          return a.x - b.x;
-        });
-        var lines = [];
-        items.forEach(function (item) {
-          var line = lines[lines.length - 1];
-          if (!line || Math.abs(line.y - item.y) > 2) lines.push({ y: item.y, h: item.h, parts: [item.s] });
-          else {
-            line.parts.push(item.s);
-            if (item.h > line.h) line.h = item.h;
-          }
-        });
-        var paragraphs = [];
-        var current = [];
-        var prev = null;
-        lines.forEach(function (line) {
-          var lineText = line.parts.join(" ").replace(/\s+/g, " ").trim();
-          if (!lineText) return;
-          if (prev && current.length && prev.y - line.y > prev.h * 1.6) {
-            paragraphs.push(current.join(" "));
-            current = [];
-          }
-          current.push(lineText);
-          prev = line;
-        });
-        if (current.length) paragraphs.push(current.join(" "));
-        return paragraphs;
-      });
-    }
-
-    function readPdfKind(file) {
-      var token = ++pdfKindToken;
-      heldText = null;
-      pdfKindWait = loadPdfjs().then(function (lib) {
-        lib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-        return file.arrayBuffer().then(function (data) {
-          return lib.getDocument({ data: data }).promise;
-        });
-      }).then(function (doc) {
-        var total = doc.numPages;
-        var limit = Math.min(total, 80);
-        var jobs = [];
-        for (var n = 1; n <= limit; n++) {
-          jobs.push(doc.getPage(n).then(function (page) {
-            return Promise.all([pageKind(page), pageParagraphs(page)]);
-          }));
-        }
-        return Promise.all(jobs).then(function (rows) {
-          doc.destroy();
-          return { total: total, rows: rows };
-        });
-      }).then(function (result) {
-        if (token !== pdfKindToken) return null;
-        var seen = {};
-        var paragraphs = [];
-        result.rows.forEach(function (row) {
-          if (row[0] !== "blank") seen[row[0]] = true;
-          paragraphs.push(row[1]);
-        });
-        var names = Object.keys(seen);
-        var kind = "scan";
-        if (!names.length) kind = "unknown";
-        else if (names.length === 1) kind = names[0];
-        else kind = "mixed";
-        heldText = {
-          kind: kind,
-          pages: result.total,
-          paragraphs: result.total > 80 ? null : paragraphs
-        };
-        track("file_chosen", { kind: kind, pages: result.total });
-        return heldText;
-      }).catch(function () {
-        if (token !== pdfKindToken) return null;
-        track("file_chosen", { kind: "unknown" });
-        return null;
-      });
     }
 
     function playSteps(finish) {
@@ -1828,36 +1674,23 @@
       body.append("source", langFrom.value);
       playSteps();
       track("translate_started");
-      (pdfKindWait || Promise.resolve(null)).then(function (text) {
-        if (text && text.kind === "text" && text.paragraphs) {
-          body.append("paragraphs", JSON.stringify(text.paragraphs));
-        }
-        return fetch(endpoint, {
-          method: "POST",
-          headers: { Authorization: "Bearer " + currentSession.access_token },
-          body: body
-        });
+      fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + currentSession.access_token },
+        body: body
       }).then(function (response) {
         if (!response.ok) {
           return response.json().catch(function () { return {}; }).then(function (data) {
             throw new Error(data.error || "Translation failed.");
           });
         }
-        var header = response.headers.get("Content-Disposition") || "";
-        var named = /filename="([^"]+)"/.exec(header);
-        return response.blob().then(function (blob) {
-          return {
-            blob: blob,
-            name: named && named[1] ? named[1] : file.name.replace(/\.pdf$/i, "") + " translated.pdf"
-          };
-        });
-      }).then(function (download) {
+        return response.blob();
+      }).then(function (blob) {
         if (!translating) return;
         clearPreview();
         dropProgressBar.style.width = "100%";
         var link = document.createElement("a");
-        var name = download.name;
-        var blob = download.blob;
+        var name = file.name.replace(/\.pdf$/i, "") + " translated.pdf";
         link.href = URL.createObjectURL(blob);
         link.download = name;
         link.click();

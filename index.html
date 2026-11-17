@@ -555,13 +555,18 @@
     }
 
     .paywall-stay {
-      margin: 0 0 20px;
+      margin: 0;
+    }
+
+    .paywall-stay + .paywall-stay {
+      margin-top: 6px;
     }
 
     .plan-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 12px;
+      margin-top: 20px;
     }
 
     .plan-card {
@@ -569,11 +574,15 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 6px;
-      min-height: 196px;
+      min-height: 148px;
       padding: 18px;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       background: var(--bg-soft);
+    }
+
+    .plan-card-pick {
+      border-color: var(--text);
     }
 
     .plan-card p {
@@ -587,19 +596,6 @@
       line-height: 34px;
       font-weight: 400;
       letter-spacing: -0.3px;
-    }
-
-    .plan-card ul {
-      margin: 8px 0 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .plan-card li {
-      margin: 0 0 6px;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 20px;
     }
 
     .plan-card .pack {
@@ -617,27 +613,11 @@
 
     .plan-card .pack:hover { opacity: 0.88; }
 
-    .plan-pair {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 12px;
-    }
-
-    .plan-card-quiet {
-      min-height: 0;
-      background: transparent;
-    }
-
-    .plan-card-quiet b {
-      font-size: 22px;
-      line-height: 28px;
-    }
-
-    .paywall-note {
-      margin: 12px 0 0;
+    .paywall-compare {
+      margin: 16px 0 0;
       color: var(--text-dim);
-      font-size: 13px;
+      font-size: 14px;
+      line-height: 20px;
     }
 
     .paywall-legal {
@@ -704,8 +684,7 @@
     }
 
     @media (max-width: 720px) {
-      .plan-grid,
-      .plan-pair { grid-template-columns: 1fr; }
+      .plan-grid { grid-template-columns: 1fr; }
     }
 
 
@@ -1194,56 +1173,27 @@
       <button type="button" class="paywall-close">Close</button>
       <h2 id="paywall-title">Buy credits</h2>
       <p class="paywall-stay">Not a subscription. No monthly charge.</p>
+      <p class="paywall-stay">One credit, one PDF. Credits never burn.</p>
       <div class="plan-grid">
-        <article class="plan-card">
+        <article class="plan-card plan-card-pick">
           <b>$5</b>
           <p>2 credits</p>
-          <ul>
-            <li>One credit, one PDF</li>
-            <li>Credits never burn</li>
-          </ul>
           <button type="button" class="pack" data-files="2">Buy</button>
         </article>
         <article class="plan-card">
           <b>$10</b>
           <p>5 credits</p>
-          <ul>
-            <li>One credit, one PDF</li>
-            <li>Credits never burn</li>
-          </ul>
           <button type="button" class="pack" data-files="5">Buy</button>
         </article>
         <article class="plan-card">
           <b>$20</b>
           <p>11 credits</p>
-          <ul>
-            <li>One credit, one PDF</li>
-            <li>Credits never burn</li>
-          </ul>
           <button type="button" class="pack" data-files="11">Buy</button>
         </article>
       </div>
-      <div class="plan-pair">
-        <article class="plan-card plan-card-quiet">
-          <p>DeepL Individual</p>
-          <b>$10.03 a month</b>
-          <ul>
-            <li>3 files</li>
-            <li>Burned. Pay again</li>
-          </ul>
-        </article>
-        <article class="plan-card plan-card-quiet">
-          <p>nespatch Credits</p>
-          <b>$5, $10, or $20</b>
-          <ul>
-            <li>2, 5, or 11 credits</li>
-            <li>Credits never burn</li>
-          </ul>
-        </article>
-      </div>
+      <p class="paywall-compare">DeepL charges every month. These credits stay until you use them.</p>
       <p class="paywall-legal">By buying, you agree to the <a href="terms.html" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="refund.html" target="_blank" rel="noopener noreferrer">Refund policy</a>.</p>
       <p class="paywall-status" id="paywall-status" hidden></p>
-      <p class="paywall-note">DeepL price for Germany, in dollars. A full year is $8.36 a month. Your country can show another price.</p>
     </div>
   </div>
 
@@ -1327,10 +1277,6 @@
       if (!on) dropProgressBar.style.width = "0%";
     }
 
-    function readyName(file) {
-      return file.name.replace(/\.pdf$/i, "") + " translated.pdf";
-    }
-
     function markReady(on) {
       drop.classList.toggle("is-ready", on);
       dropStatus.hidden = !on;
@@ -1341,9 +1287,9 @@
       showProgress(false);
       if (heldFile && (creditAmount < 1 || !currentSession)) {
         drop.classList.add("is-file");
-        markReady(previewReady);
-        dropTitle.textContent = previewReady ? readyName(heldFile) : heldFile.name;
-        dropHint.textContent = previewReady ? "The translation is ready. Buy credits to download it." : "";
+        markReady(false);
+        dropTitle.textContent = heldFile.name;
+        dropHint.textContent = previewReady ? "One credit translates this file." : "";
         dropPick.textContent = previewReady ? "Buy credits" : "Translate";
         dropPick.disabled = false;
         dropChange.disabled = false;
@@ -1731,16 +1677,10 @@
       }
     }
 
-    function startPreview() {
+    function offerCredit() {
       if (translating || !heldFile) return;
-      track("preview_started");
-      playSteps(function () {
-        translating = false;
-        previewReady = true;
-        previewTimers = [];
-        track("preview_ready");
-        paintDrop();
-      });
+      previewReady = true;
+      paintDrop();
     }
 
     function failTranslate(file, message) {
@@ -1814,7 +1754,7 @@
             dropHint.textContent = "Choose the languages.";
             return;
           }
-          startPreview();
+          offerCredit();
           return;
         }
         openPaywall();

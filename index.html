@@ -1691,6 +1691,11 @@
             fileQuote.chars = chars;
             fileQuote.price = filePrice(fileQuote.pages, chars);
             paintQuote();
+            track("file_priced", {
+              pages: fileQuote.pages,
+              chars: fileQuote.chars,
+              price: fileQuote.price
+            });
             doc.destroy();
             return;
           }
@@ -1979,7 +1984,7 @@
       checkoutStatus.hidden = true;
       checkoutStatus.textContent = "";
       fileCheckout.hidden = false;
-      track("paywall_opened");
+      track("file_checkout_opened", { price: amount || 0 });
     }
 
     function closeFileCheckout() {
@@ -2002,39 +2007,50 @@
         return;
       }
       button.disabled = true;
-      var endpoint = window.NESPATCH_TRANSLATE && window.NESPATCH_TRANSLATE.url;
-      if (!endpoint || !fileQuote || !heldFile) {
-        button.disabled = false;
-        showStatus("Choose a file first.");
-        return;
-      }
-      showStatus("Saving the file.");
-      var body = new FormData();
-      body.append("email", email);
-      body.append("pages", String(fileQuote.pages));
-      body.append("chars", fileQuote.chars == null ? "" : String(fileQuote.chars));
-      body.append("file", heldFile, heldFile.name || "file.pdf");
-      fetch(endpoint.replace(/\/$/, "") + "/checkout", {
-        method: "POST",
-        body: body
-      }).then(function (response) {
-        return response.json().catch(function () { return {}; }).then(function (data) {
-          if (!response.ok || !data.transactionId) {
-            throw new Error(data.error || "Could not start payment.");
-          }
-          return data;
+      sb.from("emails").insert({ email: email }).then(function (result) {
+        if (result.error && result.error.code !== "23505") {
+          button.disabled = false;
+          showStatus("Could not save this email.");
+          return;
+        }
+        track("email_saved");
+        var endpoint = window.NESPATCH_TRANSLATE && window.NESPATCH_TRANSLATE.url;
+        if (!endpoint || !fileQuote || !heldFile) {
+          button.disabled = false;
+          showStatus("Choose a file first.");
+          return;
+        }
+        showStatus("Saving the file.");
+        var body = new FormData();
+        body.append("email", email);
+        body.append("pages", String(fileQuote.pages));
+        body.append("chars", fileQuote.chars == null ? "" : String(fileQuote.chars));
+        body.append("file", heldFile, heldFile.name || "file.pdf");
+        fetch(endpoint.replace(/\/$/, "") + "/checkout", {
+          method: "POST",
+          body: body
+        }).then(function (response) {
+          return response.json().catch(function () { return {}; }).then(function (data) {
+            if (!response.ok || !data.transactionId) {
+              throw new Error(data.error || "Could not start payment.");
+            }
+            return data;
+          });
+        }).then(function (data) {
+          button.disabled = false;
+          window.nespatchPurchase = { value: data.price };
+          track("checkout_started", { price: data.price });
+          Paddle.Checkout.open({
+            transactionId: data.transactionId,
+            customer: { email: email }
+          });
+        }).catch(function (error) {
+          button.disabled = false;
+          showStatus(error.message || "Could not start payment.");
         });
-      }).then(function (data) {
+      }).catch(function () {
         button.disabled = false;
-        window.nespatchPurchase = { value: data.price };
-        track("checkout_started", { price: data.price });
-        Paddle.Checkout.open({
-          transactionId: data.transactionId,
-          customer: { email: email }
-        });
-      }).catch(function (error) {
-        button.disabled = false;
-        showStatus(error.message || "Could not start payment.");
+        showStatus("Could not save this email.");
       });
     });
 
@@ -2088,6 +2104,7 @@
     }
 
     function failDemo(message) {
+      track("page_failed", { error: String(message || "Could not translate this page.").slice(0, 200) });
       clearPreview();
       translating = false;
       showProgress(false);
@@ -2116,6 +2133,7 @@
       showProgress(true);
       dropProgressBar.style.width = "28%";
       dropHint.textContent = "Picking one page from the middle.";
+      track("page_started", { target: target });
       file.arrayBuffer().then(function (data) {
         return window.nespatchCutPage(data);
       }).then(function (cut) {
@@ -2154,6 +2172,7 @@
         dropChange.disabled = false;
         dropHint.textContent = "";
         fileDemoNote.textContent = "Page " + result.page + ".";
+        track("page_ready", { page: result.page });
         openGallery();
       }).catch(function (error) {
         if (token !== demoToken) return;

@@ -10,7 +10,7 @@
     gtag('js', new Date());
   </script>
   <title>nespatch</title>
-  <meta name="description" content="DeepL PDF translation with preserved layout without subscription" />
+  <meta name="description" content="PDF translation with preserved layout without subscription. Pay per File" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232536eb'/%3E%3Cpath d='M9 8.5h9.2L23 13.2V23.5H9V8.5Z' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M18 8.7V13.3H22.8' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E" />
   <style>
     :root {
@@ -745,6 +745,32 @@
 
     .free-try-status[hidden] { display: none; }
 
+    .file-demo {
+      margin-top: 28px;
+    }
+
+    .file-demo[hidden] { display: none; }
+
+    .file-demo-title {
+      margin: 0 0 8px;
+      font-size: 22px;
+      line-height: 1.3;
+    }
+
+    .file-demo-note {
+      margin: 0 0 12px;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+
+    .file-demo-sheet {
+      overflow: auto;
+      max-height: 80vh;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
     .demo {
       width: 100%;
       margin: 0;
@@ -992,7 +1018,7 @@
   <main>
     <section class="hero page-section" id="translate">
       <div class="container">
-        <h1>DeepL PDF translate with preserved layout without subscription.<br></h1>
+        <h1>PDF translate with preserved layout without subscription. Pay per File.<br></h1>
         <!-- <p class="sub">Need one more PDF today? Buy Timeless Coin. Coins will not burn never.</p> -->
 
         <div class="drop" id="drop">
@@ -1062,6 +1088,12 @@
           </div>
         </div>
 
+        <div class="file-demo" id="file-demo" hidden>
+          <p class="file-demo-title">One page of your file.</p>
+          <p class="file-demo-note" id="file-demo-note"></p>
+          <div class="file-demo-sheet" id="file-demo-sheet"></div>
+        </div>
+
         <form class="free-try" action="#" method="post" novalidate>
           <p>Want to get a free try?</p>
           <div class="free-try-row">
@@ -1088,9 +1120,7 @@
         <div class="container">
           <h2>Why I should use it?</h2>
           <div class="purpose">
-            <p>DeepL free gives you 1 file every 30 days.</p>
-            <p>The $10 plan gives 3 files. Used or not, next month you need to pay again to translate even 1 file.</p>
-            <p>nespatch credits you buy once. You can use them even 10 years later.</p>
+            <p>For use another PDF translation services you need to pay monthly. This service is pay per File.</p>
           </div>
         </div>
       </section>
@@ -1191,7 +1221,7 @@
           <button type="button" class="pack" data-files="11">Buy</button>
         </article>
       </div>
-      <p class="paywall-compare">DeepL charges every month. These credits stay until you use them.</p>
+      <p class="paywall-compare">No need to charge monthly. Just pay per File.</p>
       <p class="paywall-legal">By buying, you agree to the <a href="terms.html" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="refund.html" target="_blank" rel="noopener noreferrer">Refund policy</a>.</p>
       <p class="paywall-status" id="paywall-status" hidden></p>
     </div>
@@ -1207,6 +1237,7 @@
   <script src="supabase-config.js"></script>
   <script src="paddle-config.js"></script>
   <script src="translate-config.js"></script>
+  <script src="cut-page.js"></script>
   <script>
     function track(name, props) {
       if (!window.posthog) return;
@@ -1425,6 +1456,7 @@
           paintLang(select);
           trackLanguages();
           closeLangMenus();
+          maybeStartDemo();
         });
         item.appendChild(choice);
         menu.appendChild(item);
@@ -1456,6 +1488,7 @@
       paintLang(langFrom);
       paintLang(langTo);
       trackLanguages();
+      maybeStartDemo();
     });
     function trackLanguages() {
       if (languagesTracked || !langFrom.value || !langTo.value) return;
@@ -1533,20 +1566,136 @@
       holdFile(file);
     });
 
+    var fileDemo = document.getElementById("file-demo");
+    var fileDemoNote = document.getElementById("file-demo-note");
+    var fileDemoSheet = document.getElementById("file-demo-sheet");
+    var demoToken = 0;
+    var docxReady = null;
+
+    function loadDocxPreview() {
+      if (window.docx && window.docx.renderAsync) return Promise.resolve(window.docx);
+      if (docxReady) return docxReady;
+      function addScript(src) {
+        return new Promise(function (resolve, reject) {
+          var script = document.createElement("script");
+          script.src = src;
+          script.onload = function () { resolve(); };
+          script.onerror = function () { reject(new Error("docx")); };
+          document.head.appendChild(script);
+        });
+      }
+      docxReady = addScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js")
+        .then(function () {
+          return addScript("https://cdn.jsdelivr.net/npm/docx-preview@0.3.5/dist/docx-preview.min.js");
+        })
+        .then(function () { return window.docx; });
+      return docxReady;
+    }
+
     function holdFile(file) {
       if (!file) return;
-      if (translating) return;
       if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
         dropHint.textContent = "Choose a PDF.";
         return;
       }
+      demoToken += 1;
+      translating = false;
       clearPreview();
       previewReady = false;
+      fileDemo.hidden = true;
+      fileDemoSheet.replaceChildren();
       heldFile = file;
       drop.classList.add("is-file");
       paintDrop();
       readPdfKind(file);
+      maybeStartDemo();
     }
+
+    function maybeStartDemo() {
+      if (!heldFile) return;
+      if (!langFrom.value || !langTo.value) {
+        dropHint.textContent = "Choose the languages.";
+        return;
+      }
+      startDemo();
+    }
+
+    function failDemo(message) {
+      clearPreview();
+      translating = false;
+      showProgress(false);
+      dropPick.disabled = false;
+      dropChange.disabled = false;
+      dropHint.textContent = message || "Could not translate this page.";
+    }
+
+    function startDemo() {
+      if (!heldFile || !langFrom.value || !langTo.value) return;
+      var endpoint = window.NESPATCH_TRANSLATE && window.NESPATCH_TRANSLATE.url;
+      if (!endpoint) {
+        dropHint.textContent = "Translation is not connected yet.";
+        return;
+      }
+      var token = ++demoToken;
+      var file = heldFile;
+      var target = langTo.value;
+      translating = true;
+      previewReady = false;
+      fileDemo.hidden = true;
+      fileDemoSheet.replaceChildren();
+      markReady(false);
+      dropPick.disabled = true;
+      dropChange.disabled = true;
+      showProgress(true);
+      dropProgressBar.style.width = "28%";
+      dropHint.textContent = "Picking one page from the middle.";
+      file.arrayBuffer().then(function (data) {
+        return window.nespatchCutPage(data);
+      }).then(function (cut) {
+        if (token !== demoToken) return null;
+        dropHint.textContent = "Translating that page.";
+        dropProgressBar.style.width = "64%";
+        var body = new FormData();
+        body.append("file", new Blob([cut.bytes], { type: "application/pdf" }), "page.pdf");
+        body.append("target", target);
+        body.append("source", langFrom.value);
+        body.append("demo", "1");
+        return fetch(endpoint, { method: "POST", body: body }).then(function (response) {
+          if (!response.ok) {
+            return response.json().catch(function () { return {}; }).then(function (data) {
+              throw new Error(data.error || "Could not translate this page.");
+            });
+          }
+          return response.blob().then(function (blob) {
+            return { blob: blob, page: cut.page };
+          });
+        });
+      }).then(function (result) {
+        if (!result || token !== demoToken) return;
+        return loadDocxPreview().then(function (docx) {
+          fileDemoSheet.replaceChildren();
+          return docx.renderAsync(result.blob, fileDemoSheet).then(function () {
+            return result;
+          });
+        });
+      }).then(function (result) {
+        if (!result || token !== demoToken) return;
+        clearPreview();
+        translating = false;
+        showProgress(false);
+        dropPick.disabled = false;
+        dropChange.disabled = false;
+        dropHint.textContent = "";
+        fileDemoNote.textContent = "Page " + result.page + ".";
+        fileDemo.hidden = false;
+        fileDemo.scrollIntoView({ block: "nearest" });
+      }).catch(function (error) {
+        if (token !== demoToken) return;
+        failDemo(error.message);
+      });
+    }
+
+    window.nespatchHoldFile = holdFile;
 
     var pdfKindToken = 0;
     var pdfjsReady = null;
@@ -1652,7 +1801,7 @@
       dropChange.disabled = true;
       showProgress(true);
       var steps = [
-        ["Sending this PDF to DeepL.", "16%"],
+        ["Working on your PDF.", "16%"],
         ["Translating the pages.", "48%"],
         ["Keeping the layout in place.", "78%"],
         ["Preparing the download.", "92%"]
@@ -1748,23 +1897,11 @@
         fileInput.click();
         return;
       }
-      if (creditAmount < 1 || !currentSession) {
-        if (!previewReady) {
-          if (!langFrom.value || !langTo.value) {
-            dropHint.textContent = "Choose the languages.";
-            return;
-          }
-          offerCredit();
-          return;
-        }
-        openPaywall();
-        return;
-      }
       if (!langFrom.value || !langTo.value) {
         dropHint.textContent = "Choose the languages.";
         return;
       }
-      startRealTranslate();
+      startDemo();
     });
     dropChange.addEventListener("click", function () {
       fileInput.click();

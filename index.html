@@ -2057,7 +2057,8 @@
     });
 
     document.querySelector(".gallery-close").addEventListener("click", closeGallery);
-    document.getElementById("open-demo").addEventListener("click", openGallery);
+    var openDemo = document.getElementById("open-demo");
+    if (openDemo) openDemo.addEventListener("click", openGallery);
     document.querySelector(".gallery-stage").addEventListener("click", function (event) {
       if (event.target === event.currentTarget) closeGallery();
     });

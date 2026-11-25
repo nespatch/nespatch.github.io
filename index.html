@@ -1581,6 +1581,9 @@
     var dropStatus = document.querySelector(".drop-status");
     var fileInput = document.getElementById("file");
     var heldFile = null;
+    var demoStage = "";
+    var savedDemoResult = null;
+    var savedDemoPage = null;
     var creditAmount = 0;
     var translating = false;
     var previewReady = false;
@@ -1683,6 +1686,7 @@
         }
         fileQuote = { pages: doc.numPages, chars: null, price: filePrice(doc.numPages, null) };
         paintQuote();
+        rememberDemo();
         var chars = 0;
         function step(n) {
           if (token !== quoteToken) {
@@ -1698,6 +1702,7 @@
               chars: fileQuote.chars,
               price: fileQuote.price
             });
+            rememberDemo();
             doc.destroy();
             return;
           }
@@ -1829,6 +1834,7 @@
           select.value = option.value;
           paintLang(select);
           trackLanguages();
+          rememberDemo();
           closeLangMenus();
           if (langFrom.value && langTo.value && dropHint.textContent === "Choose the languages.") {
             dropHint.textContent = "";
@@ -1864,6 +1870,7 @@
       paintLang(langFrom);
       paintLang(langTo);
       trackLanguages();
+      rememberDemo();
     });
     function trackLanguages() {
       if (languagesTracked || !langFrom.value || !langTo.value) return;
@@ -2086,6 +2093,52 @@
       return docxReady;
     }
 
+    function demoStore() {
+      return new Promise(function (resolve, reject) {
+        var open = indexedDB.open("nespatch-demo", 1);
+        open.onupgradeneeded = function () {
+          if (!open.result.objectStoreNames.contains("state")) open.result.createObjectStore("state");
+        };
+        open.onsuccess = function () { resolve(open.result); };
+        open.onerror = function () { reject(open.error); };
+      });
+    }
+
+    function rememberDemo() {
+      if (!heldFile || !demoStage) return;
+      var record = {
+        stage: demoStage,
+        progress: dropProgressBar.style.width || "",
+        hint: dropHint.textContent || "",
+        name: heldFile.name,
+        type: heldFile.type || "application/pdf",
+        source: langFrom.value || "",
+        target: langTo.value || "",
+        quote: fileQuote ? { pages: fileQuote.pages, chars: fileQuote.chars, price: fileQuote.price } : null,
+        page: savedDemoPage,
+        file: heldFile,
+        result: savedDemoResult
+      };
+      demoStore().then(function (db) {
+        return new Promise(function (resolve) {
+          var tx = db.transaction("state", "readwrite");
+          tx.objectStore("state").put(record, "current");
+          tx.oncomplete = function () { resolve(); };
+          tx.onerror = function () { resolve(); };
+        });
+      }).catch(function () {});
+    }
+
+    function readDemo() {
+      return demoStore().then(function (db) {
+        return new Promise(function (resolve) {
+          var request = db.transaction("state", "readonly").objectStore("state").get("current");
+          request.onsuccess = function () { resolve(request.result || null); };
+          request.onerror = function () { resolve(null); };
+        });
+      }).catch(function () { return null; });
+    }
+
     function holdFile(file) {
       if (!file) return;
       if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
@@ -2099,9 +2152,13 @@
       closeGallery();
       fileDemoSheet.replaceChildren();
       heldFile = file;
+      savedDemoResult = null;
+      savedDemoPage = null;
+      demoStage = "chosen";
       fileQuote = null;
       drop.classList.add("is-file");
       paintDrop();
+      rememberDemo();
       readQuote(file);
       readPdfKind(file);
     }
@@ -2114,6 +2171,8 @@
       dropPick.disabled = false;
       dropChange.disabled = false;
       dropHint.textContent = message || "Could not translate this page.";
+      demoStage = "chosen";
+      rememberDemo();
     }
 
     function startDemo() {
@@ -2136,13 +2195,16 @@
       showProgress(true);
       dropProgressBar.style.width = "28%";
       dropHint.textContent = "Picking one page from the middle.";
+      demoStage = "translating";
       track("page_started", { target: target });
+      rememberDemo();
       file.arrayBuffer().then(function (data) {
         return window.nespatchCutPage(data);
       }).then(function (cut) {
         if (token !== demoToken) return null;
         dropHint.textContent = "Translating that page.";
         dropProgressBar.style.width = "64%";
+        rememberDemo();
         var body = new FormData();
         body.append("file", new Blob([cut.bytes], { type: "application/pdf" }), "page.pdf");
         body.append("target", target);
@@ -2175,7 +2237,12 @@
         dropChange.disabled = false;
         dropHint.textContent = "";
         fileDemoNote.textContent = "Page " + result.page + ".";
+        savedDemoResult = result.blob;
+        savedDemoPage = result.page;
+        demoStage = "shown";
+        rememberDemo();
         track("page_ready", { page: result.page });
+        track("demo_showed");
         openGallery();
       }).catch(function (error) {
         if (token !== demoToken) return;
@@ -2510,6 +2577,49 @@
     });
     document.addEventListener("scroll", syncNav, { passive: true });
     syncNav();
+
+    function restoreDemo() {
+      readDemo().then(function (saved) {
+        if (!saved || !saved.file) return;
+        heldFile = new File([saved.file], saved.name || "file.pdf", { type: saved.type || "application/pdf" });
+        savedDemoResult = saved.result || null;
+        savedDemoPage = saved.page || null;
+        if (saved.quote) fileQuote = saved.quote;
+        if (saved.source) langFrom.value = saved.source;
+        if (saved.target) langTo.value = saved.target;
+        paintLang(langFrom);
+        paintLang(langTo);
+        drop.classList.add("is-file");
+        if (saved.stage === "shown" && saved.result) {
+          demoStage = "shown";
+          translating = false;
+          paintDrop();
+          return loadDocxPreview().then(function (docx) {
+            fileDemoSheet.replaceChildren();
+            return docx.renderAsync(saved.result, fileDemoSheet);
+          }).then(function () {
+            fileDemoNote.textContent = "Page " + (saved.page || "") + ".";
+            openGallery();
+          });
+        }
+        if (saved.stage === "translating" && saved.source && saved.target) {
+          demoStage = "translating";
+          translating = true;
+          showProgress(true);
+          dropProgressBar.style.width = saved.progress || "28%";
+          dropHint.textContent = saved.hint || "Translating that page.";
+          dropPick.disabled = true;
+          dropChange.disabled = true;
+          startDemo();
+          return;
+        }
+        demoStage = "chosen";
+        translating = false;
+        paintDrop();
+        if (!fileQuote || fileQuote.chars == null) readQuote(heldFile);
+      });
+    }
+    restoreDemo();
   </script>
 </body>
 </html>

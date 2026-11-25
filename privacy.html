@@ -20,6 +20,7 @@
 
     <h2>Files</h2>
     <p>The email typed for the translated file is stored in Supabase.</p>
+    <p>The chosen PDF and a finished one-page preview stay in this browser so a reload can return to the same step. They are not sent to PostHog.</p>
 
     <h2>Analytics</h2>
     <p>The site uses PostHog to see which steps people finish. It receives a browser id and these steps: a visit, the languages, the sample slider, a one-page preview, the full-file payment page, that an email was saved, and a purchase. It does not receive the PDF, the file name, or the email address. When a file is chosen it receives the kind of PDF, the page count, and, once the price is calculated, the character count and the price. If a one-page preview fails, it receives the error text, cut to 200 characters.</p>
